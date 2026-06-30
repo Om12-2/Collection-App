@@ -18,29 +18,57 @@ db.version(2).stores({
   payments: 'id, clientId, loanId, createdAt',
 })
 
+db.version(3)
+  .stores({
+    clients: 'id, clientNumber, name, createdAt',
+    loans: 'id, clientId, dateGiven, dueDate',
+    payments: 'id, clientId, loanId, createdAt',
+  })
+  .upgrade(async (tx) => {
+    const clients = await tx.table<Client>('clients').orderBy('createdAt').toArray()
+    let nextNumber = 1
+    for (const client of clients) {
+      await tx.table<Client>('clients').update(client.id, { clientNumber: nextNumber })
+      nextNumber += 1
+    }
+  })
+
 export function generateId(): string {
   return crypto.randomUUID()
 }
 
 export async function getAllClients(): Promise<Client[]> {
-  return db.clients.orderBy('name').toArray()
+  const clients = await db.clients.toArray()
+  return clients.sort((a, b) => {
+    const aNumber = a.clientNumber ?? Number.MAX_SAFE_INTEGER
+    const bNumber = b.clientNumber ?? Number.MAX_SAFE_INTEGER
+    return aNumber - bNumber || a.name.localeCompare(b.name)
+  })
 }
 
 export async function getClient(id: string): Promise<Client | undefined> {
   return db.clients.get(id)
 }
 
-export async function addClient(client: Omit<Client, 'id' | 'createdAt'>): Promise<Client> {
-  const newClient: Client = {
-    id: generateId(),
-    createdAt: new Date().toISOString(),
-    ...client,
-  }
-  await db.clients.add(newClient)
-  return newClient
+async function getNextClientNumber(): Promise<number> {
+  const highestClient = await db.clients.orderBy('clientNumber').last()
+  return (highestClient?.clientNumber ?? 0) + 1
 }
 
-export async function updateClient(id: string, updates: Partial<Omit<Client, 'id' | 'createdAt'>>): Promise<void> {
+export async function addClient(client: Omit<Client, 'id' | 'clientNumber' | 'createdAt'>): Promise<Client> {
+  return db.transaction('rw', db.clients, async () => {
+    const newClient: Client = {
+      id: generateId(),
+      clientNumber: await getNextClientNumber(),
+      createdAt: new Date().toISOString(),
+      ...client,
+    }
+    await db.clients.add(newClient)
+    return newClient
+  })
+}
+
+export async function updateClient(id: string, updates: Partial<Omit<Client, 'id' | 'clientNumber' | 'createdAt'>>): Promise<void> {
   await db.clients.update(id, updates)
 }
 

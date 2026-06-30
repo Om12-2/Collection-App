@@ -1,10 +1,11 @@
 :root {
-  --teal-50: #f0fdfa;
-  --teal-100: #ccfbf1;
-  --teal-500: #14b8a6;
-  --teal-600: #0d9488;
-  --teal-700: #0f766e;
-  --teal-800: #115e59;
+  --teal-50: #eff6ff;
+  --teal-100: #dbeafe;
+  --teal-500: #3b82f6;
+  --teal-600: #2563eb;
+  --teal-700: #1d4ed8;
+  --teal-800: #1e40af;
+  --teal-900: #1e3a8a;
   --slate-50: #f8fafc;
   --slate-100: #f1f5f9;
   --slate-200: #e2e8f0;
@@ -106,6 +107,17 @@ body {
   border-radius: var(--radius);
   padding: 14px;
   box-shadow: var(--shadow);
+}
+
+.stat-button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.stat-button:active {
+  transform: scale(0.99);
 }
 
 .stat-card.highlight {
@@ -372,6 +384,39 @@ body {
   border-color: var(--teal-100);
 }
 
+.action-export {
+  background: var(--teal-50);
+  border: 1px solid var(--teal-100);
+  border-radius: var(--radius);
+  padding: 14px 12px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-export label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--slate-700);
+}
+
+.action-export select {
+  width: 100%;
+  border: 1px solid var(--teal-100);
+  border-radius: 10px;
+  background: white;
+  color: var(--slate-800);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 10px 12px;
+}
+
+.action-export select:focus {
+  outline: 2px solid var(--teal-500);
+  outline-offset: -1px;
+}
+
 .action-icon {
   font-size: 1.5rem;
 }
@@ -494,10 +539,66 @@ body {
   flex-shrink: 0;
 }
 
+.client-identity-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.client-id,
 .client-name {
-  font-weight: 600;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.client-id {
+  min-width: 68px;
+  color: var(--teal-700);
+  font-weight: 800;
+}
+
+.client-name {
+  font-weight: 700;
   font-size: 1rem;
+  color: var(--slate-900);
+}
+
+.identity-label {
   display: block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--slate-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.client-detail-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.identity-chip {
+  background: var(--teal-100);
+  border: 1px solid var(--teal-500);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--teal-800);
+  min-width: 74px;
+}
+
+.identity-chip strong {
+  display: block;
+  font-size: 1.1rem;
+  line-height: 1.1;
+}
+
+.identity-name h1 {
+  margin: 0;
 }
 
 .client-phone {

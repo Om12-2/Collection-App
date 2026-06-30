@@ -1,5 +1,6 @@
 export interface Client {
   id: string
+  clientNumber: number
   name: string
   phone: string
   notes: string

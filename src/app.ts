@@ -1,4 +1,4 @@
-import type { Loan, View } from './types'
+import type { Client, Loan, View } from './types'
 import {
   addClient,
   addLoan,
@@ -13,7 +13,7 @@ import {
   recordRepayment,
   updateClient,
 } from './db'
-import { exportToPDF, sharePDF } from './pdf-export'
+import { exportToExcelSheet, exportToPDF, sharePDF } from './pdf-export'
 import {
   daysUntilDue,
   escapeHtml,
@@ -34,6 +34,7 @@ interface AppState {
   lastVoiceClientId: string | null
   activityDate: string
   activityTab: 'loan' | 'collection'
+  shouldFocusActivity: boolean
 }
 
 const state: AppState = {
@@ -43,6 +44,7 @@ const state: AppState = {
   lastVoiceClientId: null,
   activityDate: todayISO(),
   activityTab: 'loan',
+  shouldFocusActivity: false,
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -77,6 +79,31 @@ function statusBadge(loan: Loan): string {
   return `<span class="badge badge-${status}">${labels[status]}</span>`
 }
 
+function getClientNumberQuery(query: string): string | null {
+  const normalizedQuery = query.trim().toLowerCase()
+  const match = normalizedQuery.match(/^(?:client\s*id\s*)?(\d+)$/)
+  return match?.[1] ?? null
+}
+
+function clientMatchesSearch(client: Client, query: string, exactClientNumberOnly = false): boolean {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return true
+  const clientNumber = client.clientNumber.toString()
+  if (exactClientNumberOnly) return clientNumber === getClientNumberQuery(normalizedQuery)
+  return [
+    clientNumber,
+    `client id ${clientNumber}`,
+    client.name.toLowerCase(),
+    client.phone,
+  ].some((value) => value.includes(normalizedQuery))
+}
+
+function showDashboardActivity(tab: AppState['activityTab']) {
+  state.activityTab = tab
+  state.shouldFocusActivity = true
+  navigate('dashboard')
+}
+
 async function renderDashboard(): Promise<string> {
   const [clients, loans, recentPayments] = await Promise.all([getAllClients(), getAllLoans(), getRecentPayments(5)])
   const totalLent = loans.reduce((s, l) => s + l.amount, 0)
@@ -102,22 +129,22 @@ async function renderDashboard(): Promise<string> {
       </header>
 
       <div class="stats-grid">
-        <div class="stat-card">
+        <button class="stat-card stat-button" data-action="clients">
           <span class="stat-label">Clients</span>
           <span class="stat-value">${clients.length}</span>
-        </div>
-        <div class="stat-card">
+        </button>
+        <button class="stat-card stat-button" data-action="dashboard-loans">
           <span class="stat-label">Total Lent</span>
           <span class="stat-value">${formatCurrency(totalLent)}</span>
-        </div>
+        </button>
         <div class="stat-card highlight">
           <span class="stat-label">Outstanding</span>
           <span class="stat-value">${formatCurrency(totalOutstanding)}</span>
         </div>
-        <div class="stat-card">
+        <button class="stat-card stat-button" data-action="dashboard-collection">
           <span class="stat-label">Repaid</span>
           <span class="stat-value">${formatCurrency(totalRepaid)}</span>
-        </div>
+        </button>
       </div>
 
       ${overdueLoans.length > 0 ? `
@@ -134,7 +161,7 @@ async function renderDashboard(): Promise<string> {
         </div>
       ` : ''}
 
-      <section class="section">
+      <section class="section" id="activity-section">
         <div class="section-header">
           <h2>Recent Activity</h2>
         </div>
@@ -233,10 +260,15 @@ async function renderDashboard(): Promise<string> {
           <span class="action-icon">👥</span>
           <span>All Clients</span>
         </button>
-        <button class="action-btn secondary" data-action="export-pdf">
+        <div class="action-export">
           <span class="action-icon">📄</span>
-          <span>Export PDF</span>
-        </button>
+          <label for="export-format">Export</label>
+          <select id="export-format" aria-label="Choose export format">
+            <option value="">Select format</option>
+            <option value="pdf">PDF</option>
+            <option value="excel">Excel sheet</option>
+          </select>
+        </div>
         <button class="action-btn secondary" data-action="share-pdf">
           <span class="action-icon">☁️</span>
           <span>Share Backup</span>
@@ -249,11 +281,9 @@ async function renderDashboard(): Promise<string> {
 async function renderClients(): Promise<string> {
   const clients = await getAllClients()
   const loans = await getAllLoans()
-  const query = state.searchQuery.toLowerCase()
-
-  const filtered = clients.filter(
-    (c) => c.name.toLowerCase().includes(query) || c.phone.includes(query),
-  )
+  const query = state.searchQuery.trim()
+  const clientNumberQuery = getClientNumberQuery(query)
+  const exactClientNumberOnly = clientNumberQuery !== null && clients.some((client) => client.clientNumber.toString() === clientNumberQuery)
 
   return `
     <div class="page">
@@ -266,28 +296,33 @@ async function renderClients(): Promise<string> {
       </header>
 
       <div class="search-bar">
-        <input type="search" id="search-input" placeholder="Search by name or phone..." value="${escapeHtml(state.searchQuery)}" />
+        <input type="search" id="search-input" placeholder="Search by Client ID, name or phone..." value="${escapeHtml(state.searchQuery)}" />
       </div>
 
       <button class="fab" data-action="add-client">+</button>
 
-      ${filtered.length === 0 ? `
+      ${clients.length === 0 ? `
         <div class="empty-state">
-          <p>${query ? 'No clients match your search.' : 'No clients yet.'}</p>
+          <p>No clients yet.</p>
           <button class="btn primary" data-action="add-client">Add First Client</button>
         </div>
       ` : `
+        <p class="empty-text search-empty" id="search-empty" ${clients.some((client) => clientMatchesSearch(client, query, exactClientNumberOnly)) ? 'hidden' : ''}>No clients match your search.</p>
         <div class="client-list">
-          ${filtered.map((client) => {
+          ${clients.map((client) => {
             const clientLoans = loans.filter((l) => l.clientId === client.id)
             const { totalOutstanding } = summarizeClient(client, clientLoans)
             const hasOverdue = clientLoans.some((l) => getLoanStatus(l) === 'overdue')
             const isCleared = totalOutstanding <= 0
+            const isMatch = clientMatchesSearch(client, query, exactClientNumberOnly)
             return `
-              <div class="client-card ${hasOverdue ? 'has-overdue' : ''} ${isCleared ? 'is-cleared' : ''}">
+              <div class="client-card ${hasOverdue ? 'has-overdue' : ''} ${isCleared ? 'is-cleared' : ''}" data-client-card data-client-number="${client.clientNumber}" data-client-name="${escapeHtml(client.name.toLowerCase())}" data-client-phone="${escapeHtml(client.phone)}" ${isMatch ? '' : 'hidden'}>
                 <div class="client-card-body" data-client="${client.id}">
                   <div class="client-card-main">
-                    <span class="client-name">${escapeHtml(client.name)}</span>
+                    <div class="client-identity-row">
+                      <span class="client-id"><span class="identity-label">Client ID</span>${client.clientNumber}</span>
+                      <span class="client-name"><span class="identity-label">Client Name</span>${escapeHtml(client.name)}</span>
+                    </div>
                     ${client.phone ? `<span class="client-phone">${escapeHtml(client.phone)}</span>` : ''}
                     ${isCleared ? '<span class="badge badge-paid">Cleared</span>' : ''}
                   </div>
@@ -409,7 +444,16 @@ async function renderClientDetail(): Promise<string> {
       <header class="page-header with-back">
         <button class="back-btn" data-action="clients">←</button>
         <div>
-          <h1>${escapeHtml(client.name)}</h1>
+          <div class="client-detail-identity">
+            <div class="identity-chip">
+              <span class="identity-label">Client ID</span>
+              <strong>${client.clientNumber}</strong>
+            </div>
+            <div class="identity-name">
+              <span class="identity-label">Client Name</span>
+              <h1>${escapeHtml(client.name)}</h1>
+            </div>
+          </div>
           ${client.phone ? `<p class="subtitle">${escapeHtml(client.phone)}</p>` : ''}
         </div>
       </header>
@@ -575,6 +619,12 @@ async function render(): Promise<void> {
 
   app.innerHTML = html + renderNav()
   attachListeners()
+  if (state.shouldFocusActivity) {
+    state.shouldFocusActivity = false
+    requestAnimationFrame(() => {
+      app.querySelector('#activity-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
 }
 
 function renderNav(): string {
@@ -596,6 +646,34 @@ function renderNav(): string {
 }
 
 let repayLoanId: string | null = null
+
+function filterClientCards(query: string) {
+  const normalizedQuery = query.trim().toLowerCase()
+  const cards = Array.from(app.querySelectorAll<HTMLElement>('[data-client-card]'))
+  const clientNumberQuery = getClientNumberQuery(normalizedQuery)
+  const exactClientNumberOnly = clientNumberQuery !== null && cards.some((card) => card.dataset.clientNumber === clientNumberQuery)
+  let visibleCount = 0
+
+  for (const card of cards) {
+    const clientNumber = card.dataset.clientNumber ?? ''
+    const clientName = card.dataset.clientName ?? ''
+    const clientPhone = card.dataset.clientPhone ?? ''
+    const matches = exactClientNumberOnly
+      ? clientNumber === clientNumberQuery
+      : !normalizedQuery || [
+        clientNumber,
+        `client id ${clientNumber}`,
+        clientName,
+        clientPhone,
+      ].some((value) => value.includes(normalizedQuery))
+
+    card.hidden = !matches
+    if (matches) visibleCount += 1
+  }
+
+  const empty = app.querySelector<HTMLElement>('#search-empty')
+  if (empty) empty.hidden = visibleCount > 0
+}
 
 function attachListeners() {
   app.querySelectorAll('[data-action]').forEach((el) => {
@@ -653,13 +731,11 @@ function attachListeners() {
           state.activityTab = 'collection'
           render()
           break
-        case 'export-pdf':
-          try {
-            await exportToPDF()
-            showToast('PDF downloaded successfully')
-          } catch {
-            showToast('Failed to export PDF', 'error')
-          }
+        case 'dashboard-loans':
+          showDashboardActivity('loan')
+          break
+        case 'dashboard-collection':
+          showDashboardActivity('collection')
           break
         case 'share-pdf':
           try {
@@ -721,7 +797,24 @@ function attachListeners() {
   const searchInput = app.querySelector<HTMLInputElement>('#search-input')
   searchInput?.addEventListener('input', () => {
     state.searchQuery = searchInput.value
-    render()
+    filterClientCards(state.searchQuery)
+  })
+
+  const exportFormat = app.querySelector<HTMLSelectElement>('#export-format')
+  exportFormat?.addEventListener('change', async () => {
+    try {
+      if (exportFormat.value === 'pdf') {
+        await exportToPDF()
+        showToast('PDF downloaded successfully')
+      } else if (exportFormat.value === 'excel') {
+        await exportToExcelSheet()
+        showToast('Excel sheet downloaded successfully')
+      }
+    } catch {
+      showToast('Failed to export backup', 'error')
+    } finally {
+      exportFormat.value = ''
+    }
   })
 
   const activityDateInput = app.querySelector<HTMLInputElement>('#activity-date')
