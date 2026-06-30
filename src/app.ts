@@ -9,6 +9,7 @@ import {
   getAllLoans,
   getClient,
   getLoansForClient,
+  getRecentPayments,
   recordRepayment,
   updateClient,
 } from './db'
@@ -31,6 +32,8 @@ interface AppState {
   selectedClientId: string | null
   searchQuery: string
   lastVoiceClientId: string | null
+  activityDate: string
+  activityTab: 'loan' | 'collection'
 }
 
 const state: AppState = {
@@ -38,6 +41,8 @@ const state: AppState = {
   selectedClientId: null,
   searchQuery: '',
   lastVoiceClientId: null,
+  activityDate: todayISO(),
+  activityTab: 'loan',
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -73,7 +78,7 @@ function statusBadge(loan: Loan): string {
 }
 
 async function renderDashboard(): Promise<string> {
-  const [clients, loans] = await Promise.all([getAllClients(), getAllLoans()])
+  const [clients, loans, recentPayments] = await Promise.all([getAllClients(), getAllLoans(), getRecentPayments(5)])
   const totalLent = loans.reduce((s, l) => s + l.amount, 0)
   const totalRepaid = loans.reduce((s, l) => s + l.amountRepaid, 0)
   const totalOutstanding = loans.reduce((s, l) => s + getOutstanding(l), 0)
@@ -82,6 +87,11 @@ async function renderDashboard(): Promise<string> {
 
   const recentLoans = loans.slice(0, 5)
   const clientMap = new Map(clients.map((c) => [c.id, c]))
+  const loanMap = new Map(loans.map((l) => [l.id, l]))
+
+  const filterDate = state.activityDate
+  const filteredRecentLoans = recentLoans.filter((l) => l.dateGiven === filterDate)
+  const filteredRecentPayments = recentPayments.filter((p) => p.createdAt.startsWith(filterDate))
 
   return `
     <div class="page">
@@ -128,23 +138,88 @@ async function renderDashboard(): Promise<string> {
         <div class="section-header">
           <h2>Recent Activity</h2>
         </div>
-        ${recentLoans.length === 0 ? '<p class="empty-text">No loans yet. Add a client and record a payment.</p>' : `
-          <div class="loan-list">
-            ${recentLoans.map((loan) => {
-              const client = clientMap.get(loan.clientId)
-              return `
-                <div class="loan-item" data-client="${loan.clientId}">
-                  <div class="loan-item-main">
-                    <span class="loan-client">${escapeHtml(client?.name ?? 'Unknown')}</span>
-                    <span class="loan-amount">${formatCurrency(loan.amount)}</span>
-                  </div>
-                  <div class="loan-item-sub">
-                    <span>${formatDate(loan.dateGiven)}</span>
-                    ${statusBadge(loan)}
-                  </div>
-                </div>
-              `
-            }).join('')}
+        <div class="activity-filter">
+          <label class="activity-filter-label" for="activity-date">Filter date</label>
+          <input type="date" id="activity-date" value="${filterDate}" />
+          <button class="btn small" data-action="activity-today">Today</button>
+        </div>
+        <div class="activity-tabs">
+          <button class="activity-tab ${state.activityTab === 'loan' ? 'active' : ''}" data-action="activity-tab-loan">
+            Loan
+          </button>
+          <button class="activity-tab ${state.activityTab === 'collection' ? 'active' : ''}" data-action="activity-tab-collection">
+            Daily Collection
+          </button>
+        </div>
+
+        ${state.activityTab === 'loan' ? `
+          <div class="recent-block">
+            ${filteredRecentLoans.length === 0 ? '<p class="empty-text">No loans for this date.</p>' : `
+              <div class="loan-list">
+                ${filteredRecentLoans.map((loan) => {
+                  const client = clientMap.get(loan.clientId)
+                  const dailyCollection = Math.ceil(loan.amount / 100)
+                  return `
+                    <div class="loan-item" data-client="${loan.clientId}">
+                      <div class="loan-item-main">
+                        <span class="loan-client">${escapeHtml(client?.name ?? 'Unknown')}</span>
+                        <span class="loan-amount">${formatCurrency(loan.amount)}</span>
+                      </div>
+                      <div class="loan-item-sub">
+                        <span>${formatDate(loan.dateGiven)}</span>
+                        ${statusBadge(loan)}
+                      </div>
+                      <div class="loan-item-breakdown">
+                        <div class="breakdown-row">
+                          <span class="breakdown-label">Daily (100 days)</span>
+                          <span class="breakdown-value">${formatCurrency(dailyCollection)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  `
+                }).join('')}
+              </div>
+            `}
+          </div>
+        ` : `
+          <div class="recent-block">
+            ${filteredRecentPayments.length === 0 ? '<p class="empty-text">No collections for this date.</p>' : `
+              <div class="loan-list">
+                ${filteredRecentPayments.map((p) => {
+                  const client = clientMap.get(p.clientId)
+                  const loan = loanMap.get(p.loanId)
+                  const clientLoans = loans.filter((l) => l.clientId === p.clientId)
+                  const remaining = clientLoans.reduce((s, l) => s + getOutstanding(l), 0)
+                  const dailyTarget = loan ? Math.ceil(loan.amount / 100) : 0
+                  const time = new Date(p.createdAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })
+
+                  return `
+                    <div class="loan-item" data-client="${p.clientId}">
+                      <div class="loan-item-main">
+                        <span class="loan-client">${escapeHtml(client?.name ?? 'Unknown')}</span>
+                        <span class="loan-amount">${formatCurrency(p.amount)}</span>
+                      </div>
+                      <div class="loan-item-sub">
+                        <span>${formatDate(p.createdAt)} • ${time}</span>
+                        <span class="badge badge-paid">Collected</span>
+                      </div>
+                      <div class="loan-item-breakdown">
+                        ${dailyTarget > 0 ? `
+                          <div class="breakdown-row">
+                            <span class="breakdown-label">Daily target</span>
+                            <span class="breakdown-value">${formatCurrency(dailyTarget)}</span>
+                          </div>
+                        ` : ''}
+                        <div class="breakdown-row">
+                          <span class="breakdown-label">Remaining balance</span>
+                          <span class="breakdown-value">${formatCurrency(remaining)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  `
+                }).join('')}
+              </div>
+            `}
           </div>
         `}
       </section>
@@ -566,6 +641,18 @@ function attachListeners() {
           }
           break
         }
+        case 'activity-today':
+          state.activityDate = todayISO()
+          render()
+          break
+        case 'activity-tab-loan':
+          state.activityTab = 'loan'
+          render()
+          break
+        case 'activity-tab-collection':
+          state.activityTab = 'collection'
+          render()
+          break
         case 'export-pdf':
           try {
             await exportToPDF()
@@ -637,6 +724,13 @@ function attachListeners() {
     render()
   })
 
+  const activityDateInput = app.querySelector<HTMLInputElement>('#activity-date')
+  activityDateInput?.addEventListener('change', () => {
+    if (!activityDateInput.value) return
+    state.activityDate = activityDateInput.value
+    render()
+  })
+
   const addClientForm = app.querySelector<HTMLFormElement>('#add-client-form')
   addClientForm?.addEventListener('submit', async (e) => {
     e.preventDefault()
@@ -682,7 +776,7 @@ function attachListeners() {
     if (!loanId) return
     const amount = Number((app.querySelector('#repay-amount') as HTMLInputElement).value)
     if (amount <= 0) return
-    await recordRepayment(loanId, amount)
+    await recordRepayment(loanId, amount, { method: 'manual', note: 'Collected from client' })
     showToast(`${formatCurrency(amount)} repayment recorded`)
     repayLoanId = null
     navigate('client-detail')

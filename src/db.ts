@@ -1,14 +1,21 @@
 import Dexie, { type EntityTable } from 'dexie'
-import type { Client, Loan } from './types'
+import type { Client, Loan, Payment } from './types'
 
 const db = new Dexie('CollectionAppDB') as Dexie & {
   clients: EntityTable<Client, 'id'>
   loans: EntityTable<Loan, 'id'>
+  payments: EntityTable<Payment, 'id'>
 }
 
 db.version(1).stores({
   clients: 'id, name, createdAt',
   loans: 'id, clientId, dateGiven, dueDate',
+})
+
+db.version(2).stores({
+  clients: 'id, name, createdAt',
+  loans: 'id, clientId, dateGiven, dueDate',
+  payments: 'id, clientId, loanId, createdAt',
 })
 
 export function generateId(): string {
@@ -67,26 +74,62 @@ export async function addLoan(loan: Omit<Loan, 'id' | 'dueDate' | 'amountRepaid'
   return newLoan
 }
 
-export async function recordRepayment(loanId: string, amount: number): Promise<void> {
+export async function recordRepayment(
+  loanId: string,
+  amount: number,
+  meta?: { createdAt?: string; method?: Payment['method']; note?: string },
+): Promise<void> {
   const loan = await db.loans.get(loanId)
   if (!loan) throw new Error('Loan not found')
-  const newRepaid = Math.min(loan.amountRepaid + amount, loan.amount)
-  await db.loans.update(loanId, { amountRepaid: newRepaid })
+
+  const apply = Math.max(0, Math.min(amount, loan.amount - loan.amountRepaid))
+  if (apply <= 0) return
+
+  const createdAt = meta?.createdAt ?? new Date().toISOString()
+  const method: Payment['method'] = meta?.method ?? 'manual'
+  const note = meta?.note ?? ''
+
+  await db.transaction('rw', db.loans, db.payments, async () => {
+    const newRepaid = Math.min(loan.amountRepaid + apply, loan.amount)
+    await db.loans.update(loanId, { amountRepaid: newRepaid })
+    await db.payments.add({
+      id: generateId(),
+      clientId: loan.clientId,
+      loanId: loan.id,
+      amount: apply,
+      createdAt,
+      method,
+      note,
+    })
+  })
 }
 
 export async function clearClientBalance(clientId: string): Promise<number> {
   const loans = await getLoansForClient(clientId)
   let cleared = 0
-  await db.transaction('rw', db.loans, async () => {
+  await db.transaction('rw', db.loans, db.payments, async () => {
     for (const loan of loans) {
       const outstanding = loan.amount - loan.amountRepaid
       if (outstanding > 0) {
         await db.loans.update(loan.id, { amountRepaid: loan.amount })
+        await db.payments.add({
+          id: generateId(),
+          clientId,
+          loanId: loan.id,
+          amount: outstanding,
+          createdAt: new Date().toISOString(),
+          method: 'system',
+          note: 'Marked as cleared',
+        })
         cleared += outstanding
       }
     }
   })
   return cleared
+}
+
+export async function getRecentPayments(limit = 5): Promise<Payment[]> {
+  return db.payments.orderBy('createdAt').reverse().limit(limit).toArray()
 }
 
 export async function deleteLoan(loanId: string): Promise<void> {

@@ -16,6 +16,16 @@ export interface Loan {
   notes: string
 }
 
+export interface Payment {
+  id: string
+  clientId: string
+  loanId: string
+  amount: number
+  createdAt: string
+  method: 'manual' | 'voice' | 'system'
+  note: string
+}
+
 export type View = 'dashboard' | 'clients' | 'add-client' | 'client-detail' | 'edit-client' | 'add-loan' | 'repay'
 
 export interface ClientWithLoans extends Client {

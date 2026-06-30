@@ -44,7 +44,7 @@ export async function recordClientRepayment(clientId: string, amount: number): P
     if (remaining <= 0) break
     const outstanding = getOutstanding(loan)
     const apply = Math.min(remaining, outstanding)
-    await recordRepayment(loan.id, apply)
+    await recordRepayment(loan.id, apply, { method: 'voice', note: 'Collected via voice command' })
     remaining -= apply
   }
   return amount - remaining
